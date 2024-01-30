@@ -38,11 +38,6 @@
 #include "fts_lib/ftsSoftware.h"
 #include "fts_lib/ftsHardware.h"
 #include <linux/completion.h>
-#include <linux/power_supply.h>
-#include <linux/pm_qos.h>
-#include <linux/sched.h>
-#include <uapi/linux/sched/types.h>
-
 /****************** CONFIGURATION SECTION ******************/
 /** @defgroup conf_section	 Driver Configuration Section
 * Settings of the driver code in order to suit the HW set up and the application behavior
@@ -60,9 +55,9 @@
 
 /*** save power mode ***/
 #define FTS_POWER_SAVE_MODE
-#define FTS_VSYNC_MODE_ENABLE
-/*#define TOUCH_IRQ_CPU_AFFINITY*/
-/*#define TOUCH_ENABLE_RAW_CRC*/
+
+#define TOUCH_THP_SUPPORT
+#define TOUCH_THP_FW
 
 #define DRIVER_TEST
 
@@ -85,7 +80,7 @@
 #define FTS_XIAOMI_TOUCHFEATURE
 #define FTS_FOD_AREA_REPORT
 #define FTS_DEBUG_FS
-
+#define CONFIG_I2C_BY_DMA 1
 #define DEBUG
 
 /*#define USE_ONE_FILE_NODE*/
@@ -184,8 +179,7 @@ do {\
 #define GRIP_PARAMETER_NUM 8
 #define EXPERT_ARRAY_SIZE 3
 
-#define CONFIG_FTS_POWERSUPPLY_CB
-
+/*#define CONFIG_FTS_POWERSUPPLY_CB*/
 enum charge_status {
 	NOT_CHARGING,
 	CHARGING,
@@ -206,6 +200,7 @@ struct fts_hw_platform_data {
 	int (*power) (bool on);
 	int irq_gpio;
 	int reset_gpio;
+	int avdd_gpio;
 	unsigned long irq_flags;
 	unsigned int x_max;
 	unsigned int y_max;
@@ -255,9 +250,6 @@ struct fts_hw_platform_data {
 	u32 touch_expert_array[6 * EXPERT_ARRAY_SIZE];
 #endif
 	bool support_fod;
-	bool support_thp;
-	bool support_thp_fw;
-	bool support_vsync_mode;
 };
 
 /*
@@ -302,8 +294,6 @@ struct fts_dma_buf {
 struct tp_frame {
 	s64 time_ns;
 	u64 frm_cnt;
-	int fod_pressed;
-	int fod_trackingId;
 	char thp_frame_buf[PAGE_SIZE];
 };
 /**
@@ -343,15 +333,11 @@ struct fts_ts_info {
 	struct work_struct work;
 	struct work_struct suspend_work;
 	struct work_struct resume_work;
-	struct work_struct fps_notify_work;
 	struct work_struct cmd_update_work;
 	struct work_struct sleep_work;
-	struct delayed_work thp_signal_work;
 	struct workqueue_struct *event_wq;
-	struct workqueue_struct *fps_wq;
 	struct workqueue_struct *irq_wq;
 	struct workqueue_struct *touch_feature_wq;
-	struct pm_qos_request pm_qos_req_irq;
 
 #ifndef FW_UPDATE_ON_PROBE
 	struct delayed_work fwu_work;
@@ -363,7 +349,6 @@ struct fts_ts_info {
 
 	unsigned int mode;
 	unsigned long touch_id;
-	unsigned long temp_touch_id;
 	unsigned long sleep_finger;
 	unsigned long touch_skip;
 #ifdef STYLUS_MODE
@@ -417,6 +402,7 @@ struct fts_ts_info {
 #endif
 	bool lockdown_is_ok;
 	bool irq_status;
+	wait_queue_head_t 	wait_queue;
 	struct completion tp_reset_completion;
 	atomic_t system_is_resetting;
 	int fod_status;
@@ -430,17 +416,15 @@ struct fts_ts_info {
 	bool fod_pressed;
 	bool prox_sensor_changed;
 	bool prox_sensor_switch;
+	bool palm_sensor_changed;
 	bool palm_sensor_switch;
 	bool enable_touch_raw;
 	bool enable_touch_delta;
 	bool enable_thp_fw;
-	int vsync_fps;
-	int reprot_rate;
 	int clicktouch_count;
 	int clicktouch_num;
 	char *data_dump_buf;
 	short strength_buf[PAGE_SIZE];
-	bool thp_debug;
 	struct tp_frame thp_frame;
 	int aod_status;
 	bool tp_pm_suspend;
@@ -457,12 +441,11 @@ struct fts_ts_info {
 	struct delayed_work power_supply_work;
 	int charging_status;
 	struct notifier_block power_supply_notifier;
-	struct delayed_work panel_notifier_register_work;
 	bool probe_ok;
 	struct mutex charge_lock;
 	int fod_icon_status;
 	int nonui_status;
-	bool gpio_has_request;
+	bool fod_down;
 };
 
 extern int fts_chip_powercycle(struct fts_ts_info *info);
@@ -484,4 +467,3 @@ int fts_prox_sensor_cmd(int input);
 bool fts_touchmode_edgefilter(unsigned int touch_id, int x, int y);
 #endif
 #endif
-int fts_enable_thp_selfcap_scan(int en);
