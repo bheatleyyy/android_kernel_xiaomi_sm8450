@@ -9392,9 +9392,8 @@ static int fts_remove(struct spi_device *client)
 * Struct which contains the compatible names that need to match with the definition of the device in the device tree node
 */
 static struct of_device_id fts_of_match_table[] = {
-	{
-	 .compatible = "st,spi",
-	 },
+	{.compatible = "st,spi",},
+	{.compatible = "xiaomi,l12-spi",},
 	{},
 };
 
