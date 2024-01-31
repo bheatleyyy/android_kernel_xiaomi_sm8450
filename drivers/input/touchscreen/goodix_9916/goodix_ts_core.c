@@ -2691,20 +2691,6 @@ void goodix_register_panel_notifier_work(struct work_struct* work) {
 	ts_info("%s enter", __func__);
 	goodix_ts_check_panel();
 
-	if (active_panel == NULL) {
-		ts_err("Failed to register panel notifier, try again");
-		if (check_count < 5) {
-			check_count++;
-			queue_delayed_work(system_wq, dwork, 0x4e2);
-			return;
-		}
-		ts_err("Failed to register panel notifier, not try");
-	} else {
-		cd->notifier_cookie = (void*)panel_event_notifier_register(1, 0, active_panel, goodix_drm_state_change_callback, cd);
-		if (cd->notifier_cookie == NULL) {
-			ts_err("Failed to register for panel events");
-		}
-	}
 }
 
 #ifdef CONFIG_FB
@@ -2981,15 +2967,18 @@ static int goodix_send_ic_config(struct goodix_ts_core *cd, int type)
 	return cd->hw_ops->send_config(cd, cfg->data, cfg->len);
 }
 
-static int goodix_start_later_init(struct goodix_ts_core *cd)
+/**
+ * goodix_later_init_thread - init IC fw and config
+ * @data: point to goodix_ts_core
+ *
+ * This function respond for get fw version and try upgrade fw and config.
+ * Note: when init encounter error, need release all resource allocated here.
+ */
+static int goodix_later_init_thread(void *data)
 {
 	int ret, i;
+	struct goodix_ts_core *cd = data;
 	struct goodix_ts_hw_ops *hw_ops = cd->hw_ops;
-
-	if (hw_ops->read_version(cd, &cd->fw_version) < 0) {
-		ts_err("failed to get version info, try to upgrade");
-		// TODO
-	}
 
 	/* setp 1: get config data from config bin */
 	if (goodix_get_config_proc(cd))
@@ -3029,16 +3018,6 @@ static int goodix_start_later_init(struct goodix_ts_core *cd)
 	 */
 	goodix_send_ic_config(cd, CONFIG_TYPE_NORMAL);
 
-	if (cd->ic_configs[1] != NULL && cd->ic_configs[1]->len != 0) {
-		ret = goodix_normalize_coeffi_update(cd);
-		if (ret != 0) {
-			ts_err("failed update normalize coeffi!");
-			goto err_out;
-		}
-	} else {
-		ts_info("no config data, skip update normalize coeffi");
-	}
-
 	/* init other resources */
 	ret = goodix_ts_stage2_init(cd);
 	if (ret) {
@@ -3061,6 +3040,21 @@ err_out:
 	}
 	return ret;
 }
+
+static int goodix_start_later_init(struct goodix_ts_core *ts_core)
+{
+	struct task_struct *init_thrd;
+	/* create and run update thread */
+	init_thrd = kthread_run(goodix_later_init_thread,
+				ts_core, "goodix_init_thread");
+	if (IS_ERR_OR_NULL(init_thrd)) {
+		ts_err("Failed to create update thread:%ld",
+		       PTR_ERR(init_thrd));
+		return -EFAULT;
+	}
+	return 0;
+}
+
 static ssize_t goodix_lockdown_info_read(struct file *file, char __user *buf,
 							 size_t count, loff_t *pos)
 {
@@ -3640,35 +3634,31 @@ static void goodix_init_touchmode_data(void)
 	/* tap sensitivity */
 	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][GET_MAX_VALUE] = 4;
 	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][GET_MIN_VALUE] = 0;
-	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][GET_DEF_VALUE] = 3;
-	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][SET_CUR_VALUE] = 3;
-	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][GET_CUR_VALUE] = 3;
+	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][GET_DEF_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][SET_CUR_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_UP_THRESHOLD][GET_CUR_VALUE] = 0;
 
 	/*  latency */
 	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][GET_MAX_VALUE] = 4;
 	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][GET_MIN_VALUE] = 0;
-	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][GET_DEF_VALUE] = 2;
-	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][SET_CUR_VALUE] = 2;
-	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][GET_CUR_VALUE] = 2;
+	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][GET_DEF_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][SET_CUR_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_Tolerance][GET_CUR_VALUE] = 0;
 
 	/* aim sensitivity */
 	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][GET_MAX_VALUE] = 4;
 	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][GET_MIN_VALUE] = 0;
-	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][GET_DEF_VALUE] = 2;
-	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][SET_CUR_VALUE] = 2;
-	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][GET_CUR_VALUE] = 2;
-	/* touch expert mode */
-	xiaomi_touch_interfaces.touch_mode[Touch_Expert_Mode][GET_MAX_VALUE] = 3;
-	xiaomi_touch_interfaces.touch_mode[Touch_Expert_Mode][GET_MIN_VALUE] = 0;
-	xiaomi_touch_interfaces.touch_mode[Touch_Expert_Mode][GET_DEF_VALUE] = 1;
-	xiaomi_touch_interfaces.touch_mode[Touch_Expert_Mode][SET_CUR_VALUE] = 1;
+	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][GET_DEF_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][SET_CUR_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_Aim_Sensitivity][GET_CUR_VALUE] = 0;
 	xiaomi_touch_interfaces.touch_mode[Touch_Expert_Mode][GET_CUR_VALUE] = 1;
+
 	/* tap stability */
 	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][GET_MAX_VALUE] = 4;
 	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][GET_MIN_VALUE] = 0;
-	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][GET_DEF_VALUE] = 2;
-	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][SET_CUR_VALUE] = 2;
-	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][GET_CUR_VALUE] = 2;
+	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][GET_DEF_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][SET_CUR_VALUE] = 0;
+	xiaomi_touch_interfaces.touch_mode[Touch_Tap_Stability][GET_CUR_VALUE] = 0;
 	/*	edge filter */
 	xiaomi_touch_interfaces.touch_mode[Touch_Edge_Filter][GET_MAX_VALUE] = 3;
 	xiaomi_touch_interfaces.touch_mode[Touch_Edge_Filter][GET_MIN_VALUE] = 0;

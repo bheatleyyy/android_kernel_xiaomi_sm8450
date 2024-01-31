@@ -411,6 +411,7 @@ struct goodix_pen_coords {
 struct goodix_touch_data {
 	int touch_num;
 	struct goodix_ts_coords coords[GOODIX_MAX_TOUCH];
+	u8 tmp_data[32];
 	unsigned int overlay;
 	int fod_id;
 	int t_id;
